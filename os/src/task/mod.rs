@@ -14,7 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
@@ -45,6 +45,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// counts of syscalls
+    syscall_counts: [[u8; MAX_APP_NUM]; MAX_SYSCALL_NUM],
 }
 
 lazy_static! {
@@ -65,6 +67,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_counts: [[0; MAX_APP_NUM]; MAX_SYSCALL_NUM],
                 })
             },
         }
@@ -135,6 +138,27 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn add_syscall_count(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.syscall_counts[id][current] += 1;
+            
+    }
+
+    fn find_syscall_count(&self, id: usize) -> u8 {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.syscall_counts[id][current]
+    }
+
+    fn read_u8_data(&self, address: *const u8) -> u8 {
+        unsafe{*(address)}
+    }
+
+    fn write_u8_data(&self, address: *mut u8, data: u8) {
+        unsafe{*(address) = data}
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +192,24 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Add count when a syscall is called
+pub fn add_syscall_count(id: usize) {
+    TASK_MANAGER.add_syscall_count(id);
+}
+
+/// Find count of syscall
+pub fn find_syscall_count(id: usize) -> u8 {
+    TASK_MANAGER.find_syscall_count(id)
+}
+
+/// Read
+pub fn read_u8_data(address: *const u8) -> u8 {
+    TASK_MANAGER.read_u8_data(address)
+}
+
+/// Write
+pub fn write_u8_data(address: *mut u8, data: u8) {
+    TASK_MANAGER.write_u8_data(address, data);
 }
