@@ -17,12 +17,12 @@ mod task;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::string::String;
 use alloc::vec::Vec;
+pub use context::TaskContext;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
-
-pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -153,6 +153,34 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn add_syscall_count(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count[id] += 1;
+    }
+
+    fn find_syscall_count(&self, id: usize) -> u8 {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count[id]
+    }
+
+    fn mmap(&self, start: usize, end: usize, prot: usize) -> Result<u8, String> {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let mem_set = &mut inner.tasks[current].memory_set;
+
+        mem_set.mmap(start, end, prot)
+    }
+
+    fn munmap(&self, start: usize, end: usize) -> Result<u8, String> {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let mem_set = &mut inner.tasks[current].memory_set;
+
+        mem_set.munmap(start, end)
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +229,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Add count when a syscall is called
+pub fn add_syscall_count(id: usize) {
+    TASK_MANAGER.add_syscall_count(id);
+}
+
+/// Find count of syscall
+pub fn find_syscall_count(id: usize) -> u8 {
+    TASK_MANAGER.find_syscall_count(id)
+}
+
+/// Allocate and map LEN bytes of memory at virtual address START
+pub fn try_allocate_phy_mm(start: usize, len: usize, prot: usize) -> Result<u8, String> {
+    TASK_MANAGER.mmap(start, start + len, prot)
+}
+
+/// Deallocate and map LEN bytes of memory at virtual address START
+pub fn try_deallocate_phy_mm(start: usize, len: usize) -> Result<u8, String> {
+    TASK_MANAGER.munmap(start, start + len)
 }

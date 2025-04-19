@@ -9,6 +9,8 @@ use crate::config::{
 };
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
@@ -261,6 +263,62 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    /// mmap
+    pub fn mmap(&mut self, start: usize, end: usize, prot: usize) -> Result<u8, String> {
+        if prot & !0x7 != 0 || prot & 0x7 == 0 {
+            return Err(format!("FATAL: BAD PROT"))
+        }
+
+        if start % PAGE_SIZE != 0 {
+            return Err(format!("FATAL: BAT START ADDRESS"))
+        }
+
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(end);
+        for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+            if self.page_table.translate(vpn).is_some_and(|pte| pte.is_valid()) {
+                return Err(format!("FATAL: {} already mapped", vpn.0));
+            }
+        }
+
+        let mut map_permission = MapPermission::U;
+        if prot & 0x1 != 0 {
+            map_permission |= MapPermission::R;
+        }
+        if prot & 0x2 != 0 {
+            map_permission |= MapPermission::W;
+        }
+        if prot & 0x4 != 0 {
+            map_permission |= MapPermission::X;
+        }
+
+        self.push(MapArea::new(start_va, end_va, MapType::Framed, map_permission), None);
+        Ok(1)
+    }
+
+    /// munmap
+    pub fn munmap(&mut self, start: usize, end: usize) -> Result<u8, String> {
+        if start % PAGE_SIZE != 0 {
+            return Err(format!("FATAL: BAD START ADDRESS"))
+        }
+        let start_vpn = VirtAddr::from(start).floor();
+        let end_vpn =VirtAddr::from(end).ceil();
+        println!("WANT: {} - {}", start_vpn.0, end_vpn.0);
+        
+        for area in &mut self.areas {
+            println!("{} - {}", area.vpn_range.get_start().0, area.vpn_range.get_end().0);
+            if area.vpn_range.get_start() <= start_vpn && area.vpn_range.get_end() >= end_vpn {
+                for vpn in VPNRange::new(start_vpn, end_vpn) {
+                    area.unmap_one(&mut self.page_table, vpn);
+                }
+
+                return Ok(0)
+            }
+        }
+
+        Err(format!("FATAL: could not find valid area"))
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory
