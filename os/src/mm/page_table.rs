@@ -213,3 +213,10 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .unwrap()
         .get_mut()
 }
+
+/// Write usize data into target address
+pub fn write_usize(token: usize, ptr: usize, data: usize) {
+    let ptr = translated_refmut(token, ptr as *mut usize);
+    // trace!("write_usize: {:x} = {}", ptr, data);
+    *ptr = data;
+}

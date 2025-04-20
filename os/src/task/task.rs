@@ -1,5 +1,5 @@
 //! Types related to task management & Functions for completely changing TCB
-use super::TaskContext;
+use super::{add_task, TaskContext};
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
@@ -23,6 +23,7 @@ pub struct TaskControlBlock {
     /// Mutable
     inner: UPSafeCell<TaskControlBlockInner>,
 }
+
 
 impl TaskControlBlock {
     /// Get the mutable reference of the inner TCB
@@ -68,6 +69,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+    
+    /// Priority for stride alogrithm
+    pub prio: isize,
+
+    /// Stride for stride alogrithm
+    pub stride: isize,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +125,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    prio: 16,
+                    stride: 0,
                 })
             },
         };
@@ -150,6 +159,9 @@ impl TaskControlBlock {
         inner.trap_cx_ppn = trap_cx_ppn;
         // initialize base_size
         inner.base_size = user_sp;
+        // initialize priority and stride
+        inner.prio = 16;
+        inner.stride = 0;
         // initialize trap_cx
         let trap_cx = inner.get_trap_cx();
         *trap_cx = TrapContext::app_init_context(
@@ -191,6 +203,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    prio: 16,
+                    stride: 0,
                 })
             },
         });
@@ -204,6 +218,16 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// Doing the same thing as fork + exec except won't copy parent's address space
+    pub fn spawn(&self, elf_data: &[u8]) -> isize {
+        let mut parent_inner = self.inner_exclusive_access();
+        let task_control_block = Arc::new(TaskControlBlock::new(elf_data));
+        let pid = task_control_block.pid.0 as isize;
+        parent_inner.children.push(task_control_block.clone());
+        add_task(task_control_block);
+        pid
     }
 
     /// get pid of process
