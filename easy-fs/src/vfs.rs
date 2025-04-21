@@ -183,4 +183,77 @@ impl Inode {
         });
         block_cache_sync_all();
     }
+    /// Get ino
+    pub fn ino(&self) -> u64 {
+        ((self.block_id as u64) << 32) | self.block_offset as u64
+    }
+    /// Get filetype
+    pub fn is_file(&self) -> bool {
+        self.read_disk_inode(|disk_inode| disk_inode.is_file())
+    }
+    /// Get nlink
+    pub fn nlink(&self) -> u32 {
+        self.read_disk_inode(|disk_inode| disk_inode.nlink)
+    }
+    /// Linkad
+    pub fn linkat(&self, old_name: &str, new_name: &str) -> isize {
+        let mut fs = self.fs.lock();
+        if let Some(inode_id) = self.read_disk_inode(|inode| self.find_inode_id(old_name, inode)) {
+            let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
+            get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+                .lock()
+                .modify(block_offset, |disk_inode: &mut DiskInode| {
+                    disk_inode.nlink += 1;
+                });
+            self.modify_disk_inode(|root_inode| {
+                let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                let new_size = (file_count + 1) * DIRENT_SZ;
+                self.increase_size(new_size as u32, root_inode, &mut fs);
+                let dirent = DirEntry::new(new_name, inode_id);
+                root_inode.write_at(
+                    file_count * DIRENT_SZ,
+                    dirent.as_bytes(),
+                    &self.block_device,
+                );
+            });
+            block_cache_sync_all();
+
+            0
+        } else {
+            -1
+        }
+    }
+
+    /// Unlink
+    pub fn unlinkat(&self, name: &str) -> isize {
+        let fs = self.fs.lock();
+        if let Some(inode_id) = self.read_disk_inode(|inode| self.find_inode_id(name, inode)) {
+            let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
+            get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+                .lock()
+                .modify(block_offset, |disk_inode: &mut DiskInode| {
+                    disk_inode.nlink -= 1;
+                });
+            self.modify_disk_inode(|root_inode| {
+                let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                let mut dirent = DirEntry::empty();
+                for i in 0..file_count {
+                    root_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device);
+                    if dirent.name() == name {
+                        let empty_dirent = DirEntry::empty();
+                        root_inode.write_at(
+                            DIRENT_SZ * i,
+                            empty_dirent.as_bytes(),
+                            &self.block_device,
+                        );
+                    }
+                }
+            });
+            block_cache_sync_all();
+
+            0
+        } else {
+            -1
+        }
+    }
 }
