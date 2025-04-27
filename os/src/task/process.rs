@@ -2,12 +2,12 @@
 
 use super::id::RecycleAllocator;
 use super::manager::insert_into_pid2process;
-use super::TaskControlBlock;
 use super::{add_task, SignalFlags};
+use super::{current_task, TaskControlBlock};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::sync::{Condvar, Mutex, MutexBlocking, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -49,6 +49,8 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// enable deadlock detect
+    pub enable_deadlock_detect: bool,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +83,128 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    /// detect mutex deadlock
+    pub fn is_mutex_safe(&self, mutex_id: usize) -> bool {
+        let task_num = self.tasks.len();
+        let mutex_num = self.mutex_list.len();
+        let mut avaliable = vec![0; self.mutex_list.len()];
+        let mut allocation = vec![vec![0; mutex_num]; task_num];
+        let mut need = vec![vec![0; mutex_num]; task_num];
+
+        for (i, mutex_opt) in self.mutex_list.iter().enumerate() {
+            if let Some(mutex_arc) = mutex_opt {
+                if let Some(mutex_blocking) = mutex_arc.as_any().downcast_ref::<MutexBlocking>() {
+                    avaliable[i] = if mutex_blocking.is_locked() { 0 } else { 1 };
+                    if let Some(owner_tid) = mutex_blocking.get_onwer() {
+                        allocation[owner_tid][i] = 1;
+                    }
+
+                    for tid in mutex_blocking.get_waiter() {
+                        need[tid][i] = 1;
+                    }
+                } else {
+                    avaliable[i] = 1;
+                }
+            }
+        }
+
+        let current_tid = current_task()
+            .unwrap()
+            .inner_exclusive_access()
+            .res
+            .as_ref()
+            .unwrap()
+            .tid;
+        need[current_tid][mutex_id] = 1;
+
+        let mut finish = vec![false; task_num];
+        let mut work = avaliable.clone();
+
+        loop {
+            let mut found = false;
+
+            for i in 0..task_num {
+                if !finish[i] {
+                    let can_finish = (0..mutex_num).all(|j| need[i][j] <= work[j]);
+                    if can_finish {
+                        for j in 0..mutex_num {
+                            work[j] += allocation[i][j];
+                        }
+                        finish[i] = true;
+                        found = true;
+                    }
+                }
+            }
+
+            if !found {
+                break;
+            }
+        }
+
+        finish.iter().all(|&f| f)
+    }
+    /// detect semaphore deadlock
+    pub fn is_semaphore_safe(&self, sem_id: usize) -> bool {
+        let task_num = self.tasks.len();
+        let sem_num = self.semaphore_list.len();
+        let mut avaliable = vec![0; self.semaphore_list.len()];
+        let mut allocation = vec![vec![0; sem_num]; task_num];
+        let mut need = vec![vec![0; sem_num]; task_num];
+
+        for (i, semaphore_opt) in self.semaphore_list.iter().enumerate() {
+            if let Some(semaphore) = semaphore_opt {
+                let inner = semaphore.inner.exclusive_access();
+                avaliable[i] = inner.count;
+
+                for (&tid, &cnt) in &inner.holders {
+                    allocation[tid][i] = cnt;
+                }
+
+                for task in &inner.wait_queue {
+                    let tid = task.inner_exclusive_access().res.as_ref().unwrap().tid;
+                    need[tid][i] += 1;
+                }
+            }
+        }
+
+        let current_tid = current_task()
+            .unwrap()
+            .inner_exclusive_access()
+            .res
+            .as_ref()
+            .unwrap()
+            .tid;
+        need[current_tid][sem_id] += 1;
+
+        let mut finish = vec![false; task_num];
+        let mut work = avaliable.clone();
+
+        loop {
+            let mut found = false;
+
+            for i in 0..task_num {
+                if !finish[i] {
+                    let can_finish = (0..sem_num).all(|j| {
+                        let work_j = work[j];
+                        need[i][j] == 0 || (work_j >= 0 && need[i][j] <= work_j as usize)
+                    });
+                    if can_finish {
+                        for j in 0..sem_num {
+                            work[j] += allocation[i][j] as isize;
+                        }
+                        finish[i] = true;
+                        found = true;
+                    }
+                }
+            }
+
+            if !found {
+                break;
+            }
+        }
+
+        finish.iter().all(|&f| f)
     }
 }
 
@@ -119,6 +243,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    enable_deadlock_detect: false,
                 })
             },
         });
@@ -245,6 +370,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    enable_deadlock_detect: false,
                 })
             },
         });
