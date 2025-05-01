@@ -4,7 +4,7 @@
 - stride 调度算法：在TCBInner中添加新字段`prio`和`stride`，初始分别为16和0。修改`manager.rs`中的`fetch()`方法，先从ready_queue中找到stride最小的任务，并将该任务从ready_queue中移除，并将stride增加pass。
 
 
-# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter4/7exercise.html#id3)
+# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter5/4exercise.html#id4)
 
 - 不是。u8最大为255，255 + 10发生一溢出变成4了，所以还是p1继续执行。
 
