@@ -1,35 +1,17 @@
 # 功能总结
 
-- `sys_get_time`：通过`PageTable::from_token`获得当前页表，考虑到结构体`TimeVal`的值可能被分到两个不同页表里，所以单独操作内部变量`sec`和`usec`。通过页表内置`translate`得到pte和ppn后得到页表的直接数组。通过`copy_from_slice`将usize写入目标地址。
-- `sys_trace`：获得pte流程与`sys_get_time`相同。通过pte内置函数判断是否可读/可写/对应地址用户可见。
-- `mmap`：在TaskManager中获得当前任务的mem_set。在mem_set先检查`start`有没有按页大小对齐。再通过遍历start - start + len处translate后有无valid的PTE来判断start, start + len是否存在中存在已经被映射的页。如果通过就新建一个MapArea并push进当前mem_set。
-- `munmap`：大致流程与`mmap`相同。除了检查的是start, start + len中是否存在未被映射的虚存。
+- `enable_deadlock_detect`：给`ProcessControlBlockInner`添加新字段`enable_deadlock_detect: bool`，根据_enabled判断是否开启死锁检测。因为`ProcessControlBlockInner`适合PCB绑定的所以该选项只会影响该线程。
+- 死锁检测：选择了现场构建向量的方式检测死锁。
+  Mutex：实现中忽略了旋锁，Mutex现在需要实现`Any` trait并实现`as_any()`。在检测中获取所有非旋锁，`avaliable[]`根据锁是否被占用决定、`allocation[][]`根据`BlockingMutex`中的新字段`owner_id`决定，该字段为当前锁的拥有着的tid，在`lock()`和`unlock()`中维护。`need[][]`根据`wait_queue`得到。最后执行该算法。
+  Semaphore：构建过程类似，除了在算法执行阶段有更严格的判定。因为`work[]`可以为负数。在判定时需要满足`need[i][j] == 0`或者`work[j] >= 0`并且`need[i,j] <= work[j]`。
 
 
-# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter4/7exercise.html#id3)
+# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter8/5exercise.html#id4)
 
-1. `[7 : 0]`是标志位；`[53 : 10]`是物理号。
-   D：自从页表项上的这一位被清零之后，页表项的对应虚拟页表是否被修改过；
-   A：自从页表项上的这一位被清零之后，页表项的对应虚拟页面是否被访问过；
-   U 控制索引到这个页表项的对应虚拟页面是否在 CPU 处于 U 特权级的情况下是否被允许访问；
-   R/W/X 分别控制索引到这个页表项的对应虚拟页面是否允许读/写/取指；
-   仅当 V(Valid) 位为 1 时，页表项才是合法的；
-
-2. 冷命中；空间不够；被置换。
-   
-   有更好的时间locality；节省页表空间；节约宝贵的cpu资源。
-   
-   20MB；给MapArea上标记，缺页就检查对应的MapArea，如果被标记为Lazy就分配一页，不然进入缺页中断。
-   
-   valid位为0。
-
-3. 写satp寄存器；
-   
-   U标志位；
-   
-   毋庸置疑性能更高，实现更为简单；
-   
-   操作系统更换特权级的时候；上下文切换。
+1. 所有线程的用户栈，对应每个线程本身的TCB，线程在任务调度队列中的引用。
+   调度器的就绪队列，Mutex、Semaphore中的等待队列。需要回收，不过会在PCB生命周期结束时自动被回收。
+2. 区别：第一种锁没有获得锁之前不会返回`lock()`。释放锁时第一种锁会直接释放，第二种锁会检查等待队列，如果有等待的线程不会释放锁而会唤醒等待的线程。
+   问题：第二种锁光`add_task(waking_task)`是不够的，因为虽然将该任务添加到了就绪队列却没有释放锁，该任务仍然不能获取锁导致死锁。
 
 
 # [荣誉准则](https://learningos.cn/rCore-Tutorial-Guide-2025S/honorcode.html)

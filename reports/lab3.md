@@ -1,35 +1,26 @@
 # 功能总结
 
-- `sys_get_time`：通过`PageTable::from_token`获得当前页表，考虑到结构体`TimeVal`的值可能被分到两个不同页表里，所以单独操作内部变量`sec`和`usec`。通过页表内置`translate`得到pte和ppn后得到页表的直接数组。通过`copy_from_slice`将usize写入目标地址。
-- `sys_trace`：获得pte流程与`sys_get_time`相同。通过pte内置函数判断是否可读/可写/对应地址用户可见。
-- `mmap`：在TaskManager中获得当前任务的mem_set。在mem_set先检查`start`有没有按页大小对齐。再通过遍历start - start + len处translate后有无valid的PTE来判断start, start + len是否存在中存在已经被映射的页。如果通过就新建一个MapArea并push进当前mem_set。
-- `munmap`：大致流程与`mmap`相同。除了检查的是start, start + len中是否存在未被映射的虚存。
+- `sys_spawn`：通过`get_app_data_by_name()`获得`elf_data`，然后获得当前TCB，通过`elf_data`创建新的TCB并添加到当前TCB的`children`中，将新的Task添加到队列，返回新的tid。
+- stride 调度算法：在TCBInner中添加新字段`prio`和`stride`，初始分别为16和0。修改`manager.rs`中的`fetch()`方法，先从ready_queue中找到stride最小的任务，并将该任务从ready_queue中移除，并将stride增加pass。
 
 
-# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter4/7exercise.html#id3)
+# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter5/4exercise.html#id4)
 
-1. `[7 : 0]`是标志位；`[53 : 10]`是物理号。
-   D：自从页表项上的这一位被清零之后，页表项的对应虚拟页表是否被修改过；
-   A：自从页表项上的这一位被清零之后，页表项的对应虚拟页面是否被访问过；
-   U 控制索引到这个页表项的对应虚拟页面是否在 CPU 处于 U 特权级的情况下是否被允许访问；
-   R/W/X 分别控制索引到这个页表项的对应虚拟页面是否允许读/写/取指；
-   仅当 V(Valid) 位为 1 时，页表项才是合法的；
+- 不是。u8最大为255，255 + 10发生一溢出变成4了，所以还是p1继续执行。
 
-2. 冷命中；空间不够；被置换。
-   
-   有更好的时间locality；节省页表空间；节约宝贵的cpu资源。
-   
-   20MB；给MapArea上标记，缺页就检查对应的MapArea，如果被标记为Lazy就分配一页，不然进入缺页中断。
-   
-   valid位为0。
+- $pass = \frac{BigStride}{priority} \leq \frac{BigStride}{2}$，每次切换进程时这个进程最多前进$\frac{BigStride}{2}$，然后就会切换为别的进程，差距会越来越小，所以最多是$\frac{BigStride}{2}$。
+- 
+```
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let diff = (self.0  - other.0) as i64;
+        if diff < 0 {
+            Some(std::cmp::Ordering::Less)
+        } else {
+            Some(std::cmp::Ordering::Greater)
+        }
+    }
 
-3. 写satp寄存器；
-   
-   U标志位；
-   
-   毋庸置疑性能更高，实现更为简单；
-   
-   操作系统更换特权级的时候；上下文切换。
+```
 
 
 # [荣誉准则](https://learningos.cn/rCore-Tutorial-Guide-2025S/honorcode.html)
