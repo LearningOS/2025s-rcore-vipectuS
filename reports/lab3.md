@@ -1,41 +1,26 @@
 # 功能总结
 
-在`sys_trace`函数中，先对`_trace_request`进行pattern match:
-- 0 -> 使用unsafe直接对`_id`进行deref后返回位置上的值；
-- 1 -> 使用unsafe对`_id`deref后在该位置写入_data；
-- 2 -> 调用task/mod.rs中相应的函数；
-- _ -> 返回-1。
-
-为了统计每个task对系统调用的次数，选择在`TaskManagerInner`中创建一个新的二维数组`syscall_counts`，一维大小为`MAX_SYSCALL_NUM`，二维大小为`MAX_APP_NUM`，二者分别以全局常量的形式定义在config.rs中。
-
-应对该数组的维护，在syscall/mod.rs的`syscall`函数开头调用了对应的函数，通过传入当前系统调用id来增加对应计数。
-
-这只是一个简单的实现，没有考虑任何错误处理。在性能和空间权衡后选择直接使用一个二维数组储存系统调用次数。
+- `sys_spawn`：通过`get_app_data_by_name()`获得`elf_data`，然后获得当前TCB，通过`elf_data`创建新的TCB并添加到当前TCB的`children`中，将新的Task添加到队列，返回新的tid。
+- stride 调度算法：在TCBInner中添加新字段`prio`和`stride`，初始分别为16和0。修改`manager.rs`中的`fetch()`方法，先从ready_queue中找到stride最小的任务，并将该任务从ready_queue中移除，并将stride增加pass。
 
 
-# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter3/5exercise.html#id6)
+# [简答题](https://learningos.cn/rCore-Tutorial-Guide-2025S/chapter4/7exercise.html#id3)
 
-1. `[rustsbi] RustSBI version 0.3.0-alpha.2, adapting to RISC-V SBI v1.0.`
-   `[rustsbi] Implementation     : RustSBI-QEMU Version 0.2.0-alpha.2`
-   
-   出错行为：kernel打印了错误原因（PageFault和IllegalInstruction）并提示任务已被kernel杀死。从结果看相关程序最终没有被执行。
+- 不是。u8最大为255，255 + 10发生一溢出变成4了，所以还是p1继续执行。
 
-2. 1.分配Trap上下文之后内核栈栈顶（向下增长）；\_\_restore的出现目前永远与需要从内核栈恢复Trap上下文有关，两种使用场景分别为：`trap_handler`后返回用户态和第一次进入用户态`run_first_task`直接\_\_switch执行第一个应用时。
-   
-   2.sstatus：该Trap发生前Cpu处于哪个特权级；
-     sepc：回到用户态后的程序从spec指示的地址开始继续执行；
-    sscratch：在此时指向用户栈栈顶，在恢复Trap上下文并与sp交换后指向新的内核栈栈顶。
-   
-   3.x2：x2就是sp，此时指向内核栈栈顶，所有恢复Trap上下文的操作都依赖这个地址，只能最后恢复。在陷入Trap之前x2的值为用户栈栈顶，在\_\_alltraps中被保存为了sscratch，最后`csrrw sp, sscratch, sp`相当于恢复了x2。
-	x4：除非我们手动出于一些特殊用途使用它，否则一般也不会被用到。在\_\_alltraps中就没有保存。
-   
-   4.sp：用户栈栈顶；sscratch：内核栈栈顶。
-   
-   5.sret。CPU 完成 Trap 处理准备返回的时候，需要通过一条 S 特权级的特权指令 sret 来完成，这一条指令具体完成以下功能：CPU 会将当前的特权级按照 sstatus 的 SPP 字段设置为 U 或者 S；
-   
-   6.sp：内核栈栈顶；sscratch：用户栈栈顶。
-   
-   7.call trap_handler之后
+- $pass = \frac{BigStride}{priority} \leq \frac{BigStride}{2}$，每次切换进程时这个进程最多前进$\frac{BigStride}{2}$，然后就会切换为别的进程，差距会越来越小，所以最多是$\frac{BigStride}{2}$。
+- 
+```
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let diff = (self.0  - other.0) as i64;
+        if diff < 0 {
+            Some(std::cmp::Ordering::Less)
+        } else {
+            Some(std::cmp::Ordering::Greater)
+        }
+    }
+
+```
 
 
 # [荣誉准则](https://learningos.cn/rCore-Tutorial-Guide-2025S/honorcode.html)
